@@ -122,7 +122,7 @@ class EpoService(Application):
         epo_names_str = config.get(self.GENERAL_CONFIG_SECTION,
                                    self.GENERAL_EPO_NAMES_CONFIG_PROP)
         epo_names = epo_names_str.split(",")
-        if len(epo_names_str.strip()) is 0 or len(epo_names) is 0:
+        if len(epo_names_str.strip()) == 0 or len(epo_names) == 0:
             raise Exception(
                 "At least one ePO server must be defined in the service configuration file")
 

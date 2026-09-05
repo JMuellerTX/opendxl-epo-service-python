@@ -80,12 +80,18 @@ class MockEpoServerRequestHandler(SimpleHTTPRequestHandler):
         elif re.search(self.STATUS_REPORT_PATTERN, self.path):
             response_content = self.dxlclient_statusreport_cmd(parsed_url)
 
+        response_body = response_content.encode('utf-8')
+
         self.send_response(requests.codes.ok)  # pylint: disable=no-member
 
         self.send_header('Content-Type', 'text/plain; charset=utf-8')
+        # Send the body length so that the client does not have to rely on
+        # EOF; the TLS socket is closed without a close_notify alert, which
+        # newer Python/OpenSSL versions report as an error to the reader.
+        self.send_header('Content-Length', str(len(response_body)))
         self.end_headers()
 
-        self.wfile.write(response_content.encode('utf-8'))
+        self.wfile.write(response_body)
 
 
     def help_cmd(self):
@@ -162,10 +168,14 @@ class MockServerRunner(object):
                 ('localhost', mock_server_port),
                 MockEpoServerRequestHandler
             )
-            mock_server.socket = ssl.wrap_socket(
-                mock_server.socket,
+            # ssl.wrap_socket() was removed in Python 3.12
+            ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ssl_context.load_cert_chain(
                 certfile=MOCK_EPOHTTPSERVER_CERTNAME,
-                keyfile=MOCK_EPOHTTPSERVER_KEYNAME,
+                keyfile=MOCK_EPOHTTPSERVER_KEYNAME
+            )
+            mock_server.socket = ssl_context.wrap_socket(
+                mock_server.socket,
                 server_side=True
             )
 
@@ -176,7 +186,7 @@ class MockServerRunner(object):
                 "thread": mock_server_thread
             }
 
-            self.servers[server_number]["thread"].setDaemon(True)
+            self.servers[server_number]["thread"].daemon = True
             self.servers[server_number]["thread"].start()
 
             self.server_info_list.append(
