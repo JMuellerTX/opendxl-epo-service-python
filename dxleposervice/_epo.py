@@ -137,7 +137,12 @@ class _EpoRemote(object):
             'Invoking command %s with the following parameters:', command_name)
         logger.debug(params)
         with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", ".*subjectAltName.*")
+            # Only the warning that follows from the caller's own choice is
+            # suppressed. There used to be a second filter here for urllib3's
+            # SubjectAltNameWarning, applied unconditionally - so it hid a
+            # genuine certificate complaint even when verification was on. It
+            # has also done nothing since urllib3 2.0, which removed that
+            # warning altogether.
             if not self._verify:
                 warnings.filterwarnings("ignore", "Unverified HTTPS request")
             return self._session.get(
