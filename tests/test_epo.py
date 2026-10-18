@@ -107,3 +107,51 @@ class TestEpoRemote(BaseClientTest):
         result = dxleposervice._epo._EpoRemote._parse_response(input_response)
 
         self.assertEqual(u'GeneratedSecurityToken', result)
+
+    def test_invalid_command_name(self):
+        with MockServerRunner() as server_list:
+            server_info = server_list[0]
+            epo_remote = dxleposervice._epo._EpoRemote(
+                host=LOCALHOST_IP,
+                port=server_info[SERVER_INFO_SERVER_PORT_KEY],
+                username=TEST_USER,
+                password=TEST_PASSWORD,
+                verify=False
+            )
+            for bad_cmd in [
+                None,
+                "",
+                "../admin",
+                "core..help",
+                "core/help",
+                "core.help?foo=bar",
+                "core.help#frag",
+                "core.help;drop",
+                "core help"
+            ]:
+                with self.assertRaises(ValueError):
+                    epo_remote.invoke_command(bad_cmd, params={})
+
+    def test_params_not_mutated_and_token_redacted(self):
+        with MockServerRunner() as server_list:
+            server_info = server_list[0]
+            epo_remote = dxleposervice._epo._EpoRemote(
+                host=LOCALHOST_IP,
+                port=server_info[SERVER_INFO_SERVER_PORT_KEY],
+                username=TEST_USER,
+                password=TEST_PASSWORD,
+                verify=False
+            )
+            caller_params = {"searchText": "myhost"}
+            epo_remote.invoke_command("core.help", params=caller_params)
+            self.assertNotIn("orion.user.security.token", caller_params)
+
+            redacted = dxleposervice._epo._redact_sensitive(
+                "Error with token " + str(epo_remote._token) + " and pass " + TEST_PASSWORD,
+                token=epo_remote._token,
+                password=TEST_PASSWORD
+            )
+            self.assertNotIn(str(epo_remote._token), redacted)
+            self.assertNotIn(TEST_PASSWORD, redacted)
+
+

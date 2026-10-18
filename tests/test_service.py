@@ -246,3 +246,56 @@ class TestEpoRequestCallback(BaseClientTest):
                 HELP_CMD_RESPONSE_PAYLOAD,
                 mock_dxl_client.latest_sent_message._payload
             )
+
+    def test_eporequestcallback_allowed_commands_and_validation(self):
+        mock_dxl_client = MockDxlClient()
+        with MockServerRunner() as server_list:
+            server_info = server_list[0]
+            test_topic = "/test/topic"
+
+            epo = dxleposervice._epo._Epo(
+                server_info[SERVER_INFO_SERVER_NAME_KEY],
+                LOCALHOST_IP,
+                server_info[SERVER_INFO_SERVER_PORT_KEY],
+                TEST_USER,
+                TEST_PASSWORD,
+                False,
+                allowed_commands=["core.help"]
+            )
+
+            epo_topics = {test_topic: epo}
+            epo_request_callback = \
+                dxleposervice.app._EpoRequestCallback(mock_dxl_client, epo_topics)
+
+            # Disallowed command
+            disallowed_req = Request(test_topic)
+            disallowed_req.payload = json.dumps(
+                {"command": "system.find", "output": "json", "params": {}}
+            ).encode(encoding="UTF-8")
+            epo_request_callback.on_request(disallowed_req)
+            self.assertIn(
+                b"not allowed",
+                mock_dxl_client.latest_sent_message.error_message
+            )
+
+            # Non-dict JSON payload
+            list_req = Request(test_topic)
+            list_req.payload = json.dumps(["not", "a", "dict"]).encode(encoding="UTF-8")
+            epo_request_callback.on_request(list_req)
+            self.assertIn(
+                b"JSON object",
+                mock_dxl_client.latest_sent_message.error_message
+            )
+
+            # Non-dict params
+            bad_params_req = Request(test_topic)
+            bad_params_req.payload = json.dumps(
+                {"command": "core.help", "params": ["bad"]}
+            ).encode(encoding="UTF-8")
+            epo_request_callback.on_request(bad_params_req)
+            self.assertIn(
+                b"JSON object",
+                mock_dxl_client.latest_sent_message.error_message
+            )
+
+

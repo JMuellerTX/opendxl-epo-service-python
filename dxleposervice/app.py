@@ -8,7 +8,7 @@ from dxlclient.service import ServiceRegistrationInfo
 from dxlclient.callbacks import RequestCallback
 from dxlclient.message import ErrorResponse, Response
 
-from ._epo import _Epo
+from ._epo import _Epo, _redact_sensitive
 
 # Configure local logger
 logger = logging.getLogger(__name__)
@@ -57,6 +57,9 @@ class EpoService(Application):
     # The CA Bundle is used to ensure that the ePO server being connected to was signed by a
     # valid authority.
     EPO_VERIFY_CERT_BUNDLE = "verifyCertBundle"
+    # Optional comma-separated list of allowed ePO remote commands
+    EPO_ALLOWED_COMMANDS_CONFIG_PROP = "allowedCommands"
+    EPO_API_NAMES_CONFIG_PROP = "apiNames"
 
     # Default value for verifying certificates
     DEFAULT_VERIFY_CERTIFICATE = True
@@ -156,9 +159,21 @@ class EpoService(Application):
                             "Unable to access CA bundle file/dir ({0}): {1}".format(
                                 self.EPO_VERIFY_CERT_BUNDLE, verify))
 
+            # Optional command allowlist
+            allowed_cmds_str = self._get_option(
+                config, epo_name, self.EPO_ALLOWED_COMMANDS_CONFIG_PROP,
+                self._get_option(config, epo_name, self.EPO_API_NAMES_CONFIG_PROP))
+            allowed_commands = None
+            if allowed_cmds_str is not None and allowed_cmds_str.strip():
+                allowed_commands = [
+                    cmd.strip() for cmd in allowed_cmds_str.split(",")
+                    if cmd.strip()
+                ]
+
             # Create ePO wrapper
             epo = _Epo(name=epo_name, host=host, port=port, user=user,
-                       password=password, verify=verify)
+                       password=password, verify=verify,
+                       allowed_commands=allowed_commands)
 
             # Unique identifier (optional, if not specified attempts to determine GUID)
             unique_id = self._get_option(config, epo_name,
@@ -249,6 +264,16 @@ class _EpoRequestCallback(RequestCallback):
         self._dxl_client = client
         self._epo_by_topic = epo_by_topic
 
+    def _redact_error_message(self, message, topic):
+        token = None
+        password = None
+        epo = self._epo_by_topic.get(topic) if self._epo_by_topic else None
+        if epo is not None and hasattr(epo, "_client"):
+            token = getattr(epo._client, "_token", None)
+            auth = getattr(epo._client, "_auth", None)
+            password = getattr(auth, "password", None)
+        return _redact_sensitive(message, token=token, password=password)
+
     def on_request(self, request):
         """
         Invoked when a request is received
@@ -258,6 +283,8 @@ class _EpoRequestCallback(RequestCallback):
         try:
             # Build dictionary from the request payload
             req_dict = json.loads(request.payload.decode(encoding=self.UTF_8))
+            if not isinstance(req_dict, dict):
+                raise ValueError("Request payload must be a JSON object")
 
             # Determine the ePO command
             if self.CMD_NAME_KEY not in req_dict:
@@ -270,6 +297,12 @@ class _EpoRequestCallback(RequestCallback):
             req_params = {}
             if self.PARAMS_KEY in req_dict:
                 req_params = req_dict[self.PARAMS_KEY]
+                if req_params is None:
+                    req_params = {}
+                elif not isinstance(req_params, dict):
+                    raise ValueError(
+                        "Request '{0}' must be a JSON object".format(
+                            self.PARAMS_KEY))
 
             # Determine the output format
             output = self.DEFAULT_OUTPUT
@@ -288,9 +321,12 @@ class _EpoRequestCallback(RequestCallback):
             self._dxl_client.send_response(response)
 
         except Exception as ex:
-            logger.exception("Error while processing request")
+            err_msg = self._redact_error_message(
+                str(ex), getattr(request, "destination_topic", None))
+            logger.error("Error while processing request: %s", err_msg)
             # Send error response
             self._dxl_client.send_response(
                 ErrorResponse(request,
-                              error_message=str(ex).encode(
+                              error_message=err_msg.encode(
                                   encoding=self.UTF_8)))
+
